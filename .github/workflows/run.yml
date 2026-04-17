@@ -5,7 +5,8 @@ name: arXiv-daily-ai-enhanced
 
 on:
   schedule:
-    - cron: "30 1 * * *"
+    # 01:15 UTC = 09:15 Asia/Shanghai
+    - cron: "15 1 * * *"
   workflow_dispatch:
 
 
@@ -149,6 +150,26 @@ jobs:
             exit 1
         fi
         echo "Markdown转换完成 / Markdown conversion completed"
+
+    - name: Send interest digest email
+      if: steps.dedup_check.outputs.has_new_content == 'true'
+      run: |
+        source .venv/bin/activate
+        today=${{ steps.crawl_step.outputs.crawl_date }}
+        echo "发送关键词邮件摘要... / Sending keyword digest email..."
+
+        export INTEREST_KEYWORDS="${{ vars.INTEREST_KEYWORDS }}"
+        export EMAIL_RECIPIENT="${{ vars.EMAIL_RECIPIENT }}"
+        export SMTP_SENDER_NAME="${{ vars.SMTP_SENDER_NAME }}"
+        export SMTP_HOST="${{ secrets.SMTP_HOST }}"
+        export SMTP_PORT="${{ secrets.SMTP_PORT }}"
+        export SMTP_USERNAME="${{ secrets.SMTP_USERNAME }}"
+        export SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}"
+
+        export LANGUAGE="${{ vars.LANGUAGE }}"
+        export LANGUAGE="${LANGUAGE:-Chinese}"
+
+        python email_digest/send_digest.py --data "data/${today}_AI_enhanced_${LANGUAGE}.jsonl"
         
     - name: Update file list
       if: steps.dedup_check.outputs.has_new_content == 'true'
