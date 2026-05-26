@@ -5,8 +5,9 @@ name: arXiv-daily-ai-enhanced
 
 on:
   schedule:
-    # 01:15 UTC = 09:15 Asia/Shanghai
-    - cron: "15 1 * * *"
+    # 21:15 UTC (Sun-Thu) = 05:15 Asia/Shanghai (Mon-Fri)
+    # The workflow currently takes about 4 hours, so this aims for email delivery around 09:15 Beijing time.
+    - cron: "15 21 * * 0-4"
   workflow_dispatch:
 
 
