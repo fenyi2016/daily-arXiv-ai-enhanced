@@ -71,6 +71,28 @@ To receive a daily digest email for your preferred keywords, add the following r
 
 The workflow will scan AI-enhanced papers using `INTEREST_KEYWORDS` and send a short digest email to `EMAIL_RECIPIENT`.
 
+## Conference keyword digest
+
+This repo also supports a standalone conference keyword digest workflow for OpenAccess-style pages such as CVPR.
+
+- Workflow: `conference-keyword-digest`
+- Default list URL: `https://openaccess.thecvf.com/CVPR2026?day=all`
+- Default keywords: `super resolution, diffusion, VQ, ISP`
+
+Features:
+
+- filters medical-related papers
+- prioritizes papers with stronger innovation signals, code links, and top-conference acceptance hints
+- groups papers into a high-priority section when multiple keyword groups are matched
+- clusters the remaining papers by keyword group
+- uses DeepSeek/OpenAI-compatible APIs to generate short Chinese summaries
+
+To run it manually, go to GitHub Actions and start `conference-keyword-digest`. You can override:
+
+- `list_url`
+- `keywords`
+- `recipient`
+
 # Plans
 See https://github.com/users/dw-dengwei/projects/3
 

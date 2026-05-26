@@ -1,0 +1,54 @@
+name: conference-keyword-digest
+
+on:
+  workflow_dispatch:
+    inputs:
+      list_url:
+        description: "Conference/OpenAccess paper list URL"
+        required: false
+        default: "https://openaccess.thecvf.com/CVPR2026?day=all"
+      keywords:
+        description: "Comma-separated keywords"
+        required: false
+        default: "super resolution, diffusion, VQ, ISP"
+      recipient:
+        description: "Recipient email, leave empty to use vars.EMAIL_RECIPIENT"
+        required: false
+        default: ""
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
+
+      - name: Run conference keyword digest
+        run: |
+          source .venv/bin/activate
+          echo "运行会议论文关键词摘要... / Running conference keyword digest..."
+
+          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+          export OPENAI_BASE_URL="${{ secrets.OPENAI_BASE_URL }}"
+          export MODEL_NAME="${{ vars.MODEL_NAME }}"
+          export TOKEN_GITHUB="${{ secrets.TOKEN_GITHUB }}"
+
+          export SMTP_HOST="${{ secrets.SMTP_HOST }}"
+          export SMTP_PORT="${{ secrets.SMTP_PORT }}"
+          export SMTP_USERNAME="${{ secrets.SMTP_USERNAME }}"
+          export SMTP_PASSWORD="${{ secrets.SMTP_PASSWORD }}"
+          export SMTP_SENDER_NAME="${{ vars.SMTP_SENDER_NAME }}"
+          export EMAIL_RECIPIENT="${{ github.event.inputs.recipient }}"
+          if [ -z "$EMAIL_RECIPIENT" ]; then
+            export EMAIL_RECIPIENT="${{ vars.EMAIL_RECIPIENT }}"
+          fi
+
+          python conference_digest/fetch_openaccess_digest.py \
+            --url "${{ github.event.inputs.list_url }}" \
+            --keywords "${{ github.event.inputs.keywords }}" \
+            --recipient "$EMAIL_RECIPIENT"
