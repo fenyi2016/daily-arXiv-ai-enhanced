@@ -1,4 +1,5 @@
 import argparse
+import html
 import json
 import os
 import smtplib
@@ -118,12 +119,56 @@ def build_digest(date_str, keywords, matched_papers):
     return "\n".join(lines).strip()
 
 
-def build_message(date_str, recipient, sender, body, matched_count):
+def build_html_digest(date_str, keywords, matched_papers):
+    parts = [
+        "<html><body>",
+        f"<h2>arXiv 每日关键词简报 - {html.escape(date_str)}</h2>",
+        f"<p><strong>关注关键词:</strong> {html.escape(', '.join(keywords))}</p>",
+        f"<p><strong>命中论文数:</strong> {len(matched_papers)}</p>",
+    ]
+
+    if not matched_papers:
+        parts.extend(
+            [
+                "<p>今天没有发现命中关键词的新论文。</p>",
+                "<p>你可以考虑放宽关键词，或继续等待下一次定时抓取。</p>",
+                "</body></html>",
+            ]
+        )
+        return "".join(parts)
+
+    for index, (paper, matched_keywords) in enumerate(matched_papers, start=1):
+        ai = paper.get("AI", {})
+        title = normalize_text(paper.get("title", "Untitled paper"))
+        paper_url = paper.get("abs") or paper.get("pdf") or f"https://arxiv.org/abs/{paper.get('id', '')}"
+        problem_text = ensure_sentence("问题：", ai.get("motivation") or ai.get("tldr") or paper.get("summary", ""))
+        method_text = ensure_sentence("方法：", ai.get("method") or ai.get("conclusion") or paper.get("summary", ""))
+        result_text = ensure_sentence("结果：", ai.get("result") or ai.get("conclusion") or ai.get("tldr") or paper.get("summary", ""))
+
+        parts.extend(
+            [
+                "<div style=\"margin-bottom: 20px;\">",
+                f"<h3>{index}. {html.escape(title)}</h3>",
+                f"<p><strong>匹配关键词:</strong> {html.escape(', '.join(matched_keywords))}</p>",
+                f"<p>{html.escape(problem_text)}</p>",
+                f"<p>{html.escape(method_text)}</p>",
+                f"<p>{html.escape(result_text)}</p>",
+                f"<p><strong>论文链接:</strong> <a href=\"{html.escape(paper_url, quote=True)}\">{html.escape(paper_url)}</a></p>",
+                "</div>",
+            ]
+        )
+
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def build_message(date_str, recipient, sender, body, matched_count, html_body):
     message = EmailMessage()
     message["Subject"] = f"【arXiv日报】{date_str} 关键词命中 {matched_count} 篇"
     message["From"] = sender
     message["To"] = recipient
     message.set_content(body, subtype="plain", charset="utf-8")
+    message.add_alternative(html_body, subtype="html", charset="utf-8")
     return message
 
 
@@ -195,8 +240,9 @@ def main():
     matched_papers = match_papers(papers, keywords)
     date_str = os.path.basename(args.data).split("_AI_enhanced_")[0]
     body = build_digest(date_str, keywords, matched_papers)
+    html_body = build_html_digest(date_str, keywords, matched_papers)
     sender = get_sender()
-    message = build_message(date_str, recipient, sender, body, len(matched_papers))
+    message = build_message(date_str, recipient, sender, body, len(matched_papers), html_body)
 
     send_email(message)
     print(
