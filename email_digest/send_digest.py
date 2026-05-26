@@ -7,6 +7,12 @@ import ssl
 import sys
 from email.message import EmailMessage
 
+PROJECT_DAILY_ARXIV_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "daily_arxiv"))
+if PROJECT_DAILY_ARXIV_DIR not in sys.path:
+    sys.path.append(PROJECT_DAILY_ARXIV_DIR)
+
+from daily_arxiv.ranking import build_priority_metadata  # type: ignore[reportMissingImports]
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -74,8 +80,92 @@ def match_papers(papers, keywords):
         search_text = get_search_text(paper)
         matched_keywords = [keyword for keyword in keywords if keyword.lower() in search_text]
         if matched_keywords:
+            if "priority_score" not in paper:
+                paper.update(build_priority_metadata(paper))
             matched.append((paper, matched_keywords))
+    matched.sort(
+        key=lambda item: (
+            -int(item[0].get("priority_score", 0) or 0),
+            -int(item[0].get("code_stars", 0) or 0),
+            normalize_text(item[0].get("title", "")).lower(),
+        )
+    )
     return matched
+
+
+def organize_matches(matched_papers, keywords):
+    high_weight_groups = {}
+    keyword_groups = {keyword: [] for keyword in keywords}
+
+    for paper, matched_keywords in matched_papers:
+        ordered_keywords = [keyword for keyword in keywords if keyword in matched_keywords]
+        if len(ordered_keywords) >= 2:
+            group_name = " + ".join(ordered_keywords)
+            high_weight_groups.setdefault(group_name, []).append((paper, ordered_keywords))
+        elif len(ordered_keywords) == 1:
+            keyword_groups.setdefault(ordered_keywords[0], []).append((paper, ordered_keywords))
+
+    keyword_groups = {
+        keyword: items for keyword, items in keyword_groups.items() if items
+    }
+    return high_weight_groups, keyword_groups
+
+
+def append_paper_lines(lines, papers, start_index):
+    current_index = start_index
+    for paper, matched_keywords in papers:
+        ai = paper.get("AI", {})
+        title = normalize_text(paper.get("title", "Untitled paper"))
+        paper_url = paper.get("abs") or paper.get("pdf") or f"https://arxiv.org/abs/{paper.get('id', '')}"
+        problem_text = ai.get("motivation") or ai.get("tldr") or paper.get("summary", "")
+        method_text = ai.get("method") or ai.get("conclusion") or paper.get("summary", "")
+        result_text = ai.get("result") or ai.get("conclusion") or ai.get("tldr") or paper.get("summary", "")
+
+        lines.extend(
+            [
+                f"{current_index}. {title}",
+                f"匹配关键词: {', '.join(matched_keywords)}",
+                f"排序分数: {paper.get('priority_score', 0)}",
+                f"排序依据: {', '.join(paper.get('priority_reasons', [])) or '默认排序'}",
+                ensure_sentence("问题：", problem_text),
+                ensure_sentence("方法：", method_text),
+                ensure_sentence("结果：", result_text),
+                f"论文链接：{paper_url}",
+                "",
+            ]
+        )
+        current_index += 1
+
+    return current_index
+
+
+def append_paper_html(parts, papers, start_index):
+    current_index = start_index
+    for paper, matched_keywords in papers:
+        ai = paper.get("AI", {})
+        title = normalize_text(paper.get("title", "Untitled paper"))
+        paper_url = paper.get("abs") or paper.get("pdf") or f"https://arxiv.org/abs/{paper.get('id', '')}"
+        problem_text = ensure_sentence("问题：", ai.get("motivation") or ai.get("tldr") or paper.get("summary", ""))
+        method_text = ensure_sentence("方法：", ai.get("method") or ai.get("conclusion") or paper.get("summary", ""))
+        result_text = ensure_sentence("结果：", ai.get("result") or ai.get("conclusion") or ai.get("tldr") or paper.get("summary", ""))
+
+        parts.extend(
+            [
+                "<div style=\"margin-bottom: 20px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px;\">",
+                f"<h4 style=\"margin: 0 0 8px 0;\">{current_index}. {html.escape(title)}</h4>",
+                f"<p><strong>匹配关键词:</strong> {html.escape(', '.join(matched_keywords))}</p>",
+                f"<p><strong>排序分数:</strong> {paper.get('priority_score', 0)}</p>",
+                f"<p><strong>排序依据:</strong> {html.escape(', '.join(paper.get('priority_reasons', [])) or '默认排序')}</p>",
+                f"<p>{html.escape(problem_text)}</p>",
+                f"<p>{html.escape(method_text)}</p>",
+                f"<p>{html.escape(result_text)}</p>",
+                f"<p><strong>论文链接:</strong> <a href=\"{html.escape(paper_url, quote=True)}\">{html.escape(paper_url)}</a></p>",
+                "</div>",
+            ]
+        )
+        current_index += 1
+
+    return current_index
 
 
 def build_digest(date_str, keywords, matched_papers):
@@ -96,25 +186,23 @@ def build_digest(date_str, keywords, matched_papers):
         )
         return "\n".join(lines)
 
-    for index, (paper, matched_keywords) in enumerate(matched_papers, start=1):
-        ai = paper.get("AI", {})
-        title = normalize_text(paper.get("title", "Untitled paper"))
-        paper_url = paper.get("abs") or paper.get("pdf") or f"https://arxiv.org/abs/{paper.get('id', '')}"
-        problem_text = ai.get("motivation") or ai.get("tldr") or paper.get("summary", "")
-        method_text = ai.get("method") or ai.get("conclusion") or paper.get("summary", "")
-        result_text = ai.get("result") or ai.get("conclusion") or ai.get("tldr") or paper.get("summary", "")
+    high_weight_groups, keyword_groups = organize_matches(matched_papers, keywords)
+    current_index = 1
 
-        lines.extend(
-            [
-                f"{index}. {title}",
-                f"匹配关键词: {', '.join(matched_keywords)}",
-                ensure_sentence("问题：", problem_text),
-                ensure_sentence("方法：", method_text),
-                ensure_sentence("结果：", result_text),
-                f"论文链接：{paper_url}",
-                "",
-            ]
-        )
+    if high_weight_groups:
+        lines.extend(["高权重论文（同时命中多组关键词）", ""])
+        for group_name, papers in high_weight_groups.items():
+            lines.extend([f"## {group_name}", ""])
+            current_index = append_paper_lines(lines, papers, current_index)
+
+    if keyword_groups:
+        lines.extend(["其余论文（按关键词聚类）", ""])
+        for keyword in keywords:
+            papers = keyword_groups.get(keyword)
+            if not papers:
+                continue
+            lines.extend([f"## {keyword}", ""])
+            current_index = append_paper_lines(lines, papers, current_index)
 
     return "\n".join(lines).strip()
 
@@ -137,26 +225,23 @@ def build_html_digest(date_str, keywords, matched_papers):
         )
         return "".join(parts)
 
-    for index, (paper, matched_keywords) in enumerate(matched_papers, start=1):
-        ai = paper.get("AI", {})
-        title = normalize_text(paper.get("title", "Untitled paper"))
-        paper_url = paper.get("abs") or paper.get("pdf") or f"https://arxiv.org/abs/{paper.get('id', '')}"
-        problem_text = ensure_sentence("问题：", ai.get("motivation") or ai.get("tldr") or paper.get("summary", ""))
-        method_text = ensure_sentence("方法：", ai.get("method") or ai.get("conclusion") or paper.get("summary", ""))
-        result_text = ensure_sentence("结果：", ai.get("result") or ai.get("conclusion") or ai.get("tldr") or paper.get("summary", ""))
+    high_weight_groups, keyword_groups = organize_matches(matched_papers, keywords)
+    current_index = 1
 
-        parts.extend(
-            [
-                "<div style=\"margin-bottom: 20px;\">",
-                f"<h3>{index}. {html.escape(title)}</h3>",
-                f"<p><strong>匹配关键词:</strong> {html.escape(', '.join(matched_keywords))}</p>",
-                f"<p>{html.escape(problem_text)}</p>",
-                f"<p>{html.escape(method_text)}</p>",
-                f"<p>{html.escape(result_text)}</p>",
-                f"<p><strong>论文链接:</strong> <a href=\"{html.escape(paper_url, quote=True)}\">{html.escape(paper_url)}</a></p>",
-                "</div>",
-            ]
-        )
+    if high_weight_groups:
+        parts.append("<h3>高权重论文（同时命中多组关键词）</h3>")
+        for group_name, papers in high_weight_groups.items():
+            parts.append(f"<h4>{html.escape(group_name)}</h4>")
+            current_index = append_paper_html(parts, papers, current_index)
+
+    if keyword_groups:
+        parts.append("<h3>其余论文（按关键词聚类）</h3>")
+        for keyword in keywords:
+            papers = keyword_groups.get(keyword)
+            if not papers:
+                continue
+            parts.append(f"<h4>{html.escape(keyword)}</h4>")
+            current_index = append_paper_html(parts, papers, current_index)
 
     parts.append("</body></html>")
     return "".join(parts)

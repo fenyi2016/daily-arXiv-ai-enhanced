@@ -6,10 +6,9 @@
 
 # useful for handling different item types with a single interface
 import arxiv
-import json
-import os
-import sys
-from datetime import datetime, timedelta
+from scrapy.exceptions import DropItem
+
+from daily_arxiv.ranking import is_medical_paper
 
 
 class DailyArxivPipeline:
@@ -29,4 +28,8 @@ class DailyArxivPipeline:
         item["categories"] = paper.categories
         item["comment"] = paper.comment
         item["summary"] = paper.summary
+
+        if is_medical_paper(item):
+            raise DropItem(f"Filtered medical-related paper: {item['id']}")
+
         return item

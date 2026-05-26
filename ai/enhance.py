@@ -22,6 +22,12 @@ from langchain.prompts import (
 )
 from structure import Structure
 
+PROJECT_DAILY_ARXIV_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "daily_arxiv"))
+if PROJECT_DAILY_ARXIV_DIR not in sys.path:
+    sys.path.append(PROJECT_DAILY_ARXIV_DIR)
+
+from daily_arxiv.ranking import build_priority_metadata, sort_papers
+
 if os.path.exists('.env'):
     dotenv.load_dotenv()
 template = open("template.txt", "r").read()
@@ -163,6 +169,8 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
     for v in item.get("AI", {}).values():
         if is_sensitive(str(v)):
             return None
+
+    item.update(build_priority_metadata(item))
     return item
 
 def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
@@ -245,12 +253,13 @@ def main():
         language,
         args.max_workers
     )
+
+    processed_data = sort_papers([item for item in processed_data if item is not None])
     
     # 保存结果
     with open(target_file, "w") as f:
         for item in processed_data:
-            if item is not None:
-                f.write(json.dumps(item) + "\n")
+            f.write(json.dumps(item) + "\n")
 
 if __name__ == "__main__":
     main()
